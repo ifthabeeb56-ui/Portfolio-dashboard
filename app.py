@@ -5,21 +5,20 @@ import plotly.express as px
 import yfinance as yf
 from datetime import datetime
 
-# --- DATABASE SETUP ---
+# --- 1. DATABASE SETUP ---
 def get_connection():
     return sqlite3.connect("habeeb_inv.db", check_same_thread=False)
 
 def init_db():
     conn = get_connection()
-    # index_type എന്ന കോളം ഉണ്ടെന്ന് ഉറപ്പുവരുത്തുന്നു
     conn.execute("""
         CREATE TABLE IF NOT EXISTS portfolio (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            category TEXT,
-            index_type TEXT,
-            quantity REAL,
-            buy_price REAL
+            symbol TEXT NOT NULL,
+            index_name TEXT,
+            qty REAL,
+            avg_price REAL,
+            date_added TEXT
         )
     """)
     conn.commit()
@@ -27,17 +26,33 @@ def init_db():
 
 init_db()
 
-# --- INDEX STOCK LISTS ---
-STOCKS_DICT = {
-    "Nifty 50": ["RELIANCE", "TCS", "HDFCBANK", "ICICIBANK", "INFY", "HINDUNILVR", "ITC", "SBIN", "BHARTIARTL", "KOTAKBANK"],
-    "Nifty Bank": ["HDFCBANK", "ICICIBANK", "SBIN", "KOTAKBANK", "AXISBANK", "INDUSINDBK", "PNB", "FEDERALBNK"],
-    "Nifty IT": ["TCS", "INFY", "WIPRO", "HCLTECH", "TECHM", "LTIM", "PERSISTENT", "COFORGE"],
-    "Nifty 500": ["RELIANCE", "TCS", "ZOMATO", "PAYTM", "ADANIENT", "TATAMOTORS", "MRF", "NYKAA", "SUZLON", "IRFC"]
-}
+# --- 2. DYNAMIC STOCK LIST FETCHING ---
+@st.cache_data
+def get_index_stocks(index_name):
+    try:
+        if index_name == "Nifty 50":
+            url = "https://en.wikipedia.org/wiki/NIFTY_50"
+            df = pd.read_html(url)[2] # വിക്കിപീഡിയയിലെ മൂന്നാമത്തെ ടേബിൾ
+            return sorted(df['Symbol'].tolist())
+        
+        elif index_name == "Nifty 500":
+            # Nifty 500 ലിസ്റ്റ് വിക്കിപീഡിയയിൽ നിന്നോ എൻഎസ്ഇയിൽ നിന്നോ എടുക്കാം
+            url = "https://en.wikipedia.org/wiki/List_of_Nifty_500_companies"
+            df = pd.read_html(url)[0]
+            return sorted(df['Symbol'].tolist())
+            
+        elif index_name == "Nifty Bank":
+            return sorted(["HDFCBANK", "ICICIBANK", "SBIN", "KOTAKBANK", "AXISBANK", "INDUSINDBK", "AUBL", "IDFCFIRSTB", "FEDERALBNK", "BANDHANBNK", "BANKBARODA", "PNB"])
+            
+        elif index_name == "Nifty IT":
+            return sorted(["TCS", "INFY", "WIPRO", "HCLTECH", "TECHM", "LTIM", "PERSISTENT", "COFORGE", "MPHASIS", "LTTS"])
+    except Exception:
+        # ഇന്റർനെറ്റ് പ്രശ്നമുണ്ടെങ്കിൽ കാണിക്കാൻ ഒരു ബാക്കപ്പ് ലിസ്റ്റ്
+        return ["RELIANCE", "TCS", "HDFCBANK", "INFY"]
 
-# --- LIVE PRICE FETCHING (With Cache) ---
-@st.cache_data(ttl=600) # 10 മിനിറ്റ് ഡാറ്റ സേവ് ചെയ്തു വെക്കും (വേഗത കൂട്ടാൻ)
-def get_live_price(symbol):
+# --- 3. LIVE PRICE FETCHING ---
+@st.cache_data(ttl=300)
+def fetch_live_price(symbol):
     try:
         ticker = yf.Ticker(f"{symbol}.NS")
         price = ticker.fast_info['lastPrice']
@@ -45,99 +60,108 @@ def get_live_price(symbol):
     except:
         return None
 
-# --- PAGE CONFIG ---
-st.set_page_config(page_title="Habeeb's Pro Dashboard", layout="wide")
+# --- 4. UI CONFIG ---
+st.set_page_config(page_title="Habeeb INV Pro", layout="wide")
 
-# Dark CSS
 st.markdown("""
     <style>
     .stApp { background-color: #0E1117; color: white; }
     div[data-testid="stMetric"] {
-        background-color: #161B22; border-radius: 12px; padding: 15px; border: 1px solid #30363D;
+        background-color: #161B22; border-radius: 12px; padding: 20px; border: 1px solid #30363D;
     }
-    .stButton>button { background-color: #238636; color: white; border-radius: 8px; }
+    .stSidebar { background-color: #0D1117; border-right: 1px solid #30363D; }
+    .stButton>button { background-color: #238636; color: white; border-radius: 8px; width: 100%; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- DATA LOADING ---
+# --- 5. DATA LOADING ---
 conn = get_connection()
 df_portfolio = pd.read_sql_query("SELECT * FROM portfolio", conn)
 conn.close()
 
-# --- SIDEBAR ---
+# --- 6. SIDEBAR ---
 with st.sidebar:
-    st.markdown("<h1 style='color: #58A6FF; text-align: center;'>HABEEB INV</h1>", unsafe_allow_html=True)
+    st.markdown("<h2 style='color: #58A6FF; text-align: center;'>HABEEB INV</h2>", unsafe_allow_html=True)
     st.markdown("---")
-    page = st.radio("Menu", ["📊 Dashboard", "⚙️ Manage Stocks"])
+    menu = st.radio("Menu", ["📊 Overview", "⚙️ Manage Assets"])
 
-if page == "📊 Dashboard":
-    st.title("🚀 Multi-Index Portfolio")
+# --- 7. DASHBOARD PAGE ---
+if menu == "📊 Overview":
+    st.title("🚀 Portfolio Analytics")
     
     if not df_portfolio.empty:
-        with st.spinner('Updating market prices...'):
-            df_portfolio['current_price'] = df_portfolio['name'].apply(get_live_price)
-            df_portfolio['current_price'] = df_portfolio['current_price'].fillna(df_portfolio['buy_price'])
-
-        df_portfolio['Invested'] = df_portfolio['quantity'] * df_portfolio['buy_price']
-        df_portfolio['Value'] = df_portfolio['quantity'] * df_portfolio['current_price']
+        with st.spinner('Updating Market Prices...'):
+            df_portfolio['Live Price'] = df_portfolio['symbol'].apply(fetch_live_price)
+            df_portfolio['Live Price'] = df_portfolio['Live Price'].fillna(df_portfolio['avg_price'])
+            
+        df_portfolio['Invested'] = df_portfolio['qty'] * df_portfolio['avg_price']
+        df_portfolio['Value'] = df_portfolio['qty'] * df_portfolio['Live Price']
         df_portfolio['PnL'] = df_portfolio['Value'] - df_portfolio['Invested']
-        
+
         # Metrics
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Total Invested", f"₹{df_portfolio['Invested'].sum():,.0f}")
-        m2.metric("Current Value", f"₹{df_portfolio['Value'].sum():,.0f}")
-        profit = df_portfolio['PnL'].sum()
-        inv_sum = df_portfolio['Invested'].sum()
-        p_pct = (profit/inv_sum*100) if inv_sum > 0 else 0
-        m3.metric("Total P&L", f"₹{profit:,.0f}", f"{p_pct:.2f}%")
-        m4.metric("Stocks Count", len(df_portfolio))
+        total_inv = df_portfolio['Invested'].sum()
+        total_val = df_portfolio['Value'].sum()
+        total_pnl = df_portfolio['PnL'].sum()
+        p_pct = (total_pnl / total_inv * 100) if total_inv > 0 else 0
+        
+        m1.metric("Total Invested", f"₹{total_inv:,.0f}")
+        m2.metric("Market Value", f"₹{total_val:,.0f}")
+        m3.metric("Net Profit/Loss", f"₹{total_pnl:,.0f}", f"{pnl_pct:.2f}%")
+        m4.metric("Assets", len(df_portfolio))
 
         st.markdown("---")
-        
-        c1, c2 = st.columns([2, 1])
-        with c1:
-            st.subheader("📈 Performance by Index")
-            idx_pnl = df_portfolio.groupby('index_type')['PnL'].sum().reset_index()
-            fig = px.bar(idx_pnl, x='index_type', y='PnL', color='index_type', template="plotly_dark")
-            st.plotly_chart(fig, use_container_width=True)
-        
-        with c2:
-            st.subheader("Index Allocation")
-            fig_pie = px.pie(df_portfolio, names='index_type', values='Value', hole=0.5, template="plotly_dark")
+
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            st.subheader("Performance")
+            fig_bar = px.bar(df_portfolio, x='symbol', y='PnL', color='PnL', 
+                             color_continuous_scale='RdYlGn', color_continuous_midpoint=0, template="plotly_dark")
+            st.plotly_chart(fig_bar, use_container_width=True)
+            
+        with col2:
+            st.subheader("Allocation")
+            fig_pie = px.pie(df_portfolio, names='index_name', values='Value', hole=0.5, template="plotly_dark")
             st.plotly_chart(fig_pie, use_container_width=True)
 
-        st.subheader("📋 Detailed Holdings")
-        st.dataframe(df_portfolio[['name', 'index_type', 'quantity', 'buy_price', 'current_price', 'PnL']], use_container_width=True)
+        st.subheader("📋 Your Holdings")
+        st.dataframe(df_portfolio[['symbol', 'index_name', 'qty', 'avg_price', 'Live Price', 'PnL']], use_container_width=True)
     else:
-        st.info("No stocks added yet.")
+        st.info("നിങ്ങളുടെ പോർട്ട്‌ഫോളിയോ കാലിയാണ്.")
 
-elif page == "⚙️ Manage Stocks":
-    st.title("Portfolio Settings")
-    t1, t2 = st.tabs(["➕ Add Stock", "🗑️ Remove Stock"])
+# --- 8. MANAGE ASSETS ---
+elif menu == "⚙️ Manage Assets":
+    st.title("Asset Management")
+    tab1, tab2 = st.tabs(["➕ Add Position", "🗑️ Close Position"])
     
-    with t1:
+    with tab1:
         with st.form("add_form", clear_on_submit=True):
-            col1, col2 = st.columns(2)
-            idx = col1.selectbox("Select Index", list(STOCKS_DICT.keys()))
-            name = col2.selectbox("Select Stock", STOCKS_DICT[idx])
-            qty = col1.number_input("Quantity", min_value=0.1)
-            buy_p = col2.number_input("Avg. Buy Price", min_value=0.1)
+            c1, c2 = st.columns(2)
+            # ആദ്യം ഇൻഡക്സ് തിരഞ്ഞെടുക്കുക
+            sel_idx = c1.selectbox("Select Index", ["Nifty 50", "Nifty Bank", "Nifty IT", "Nifty 500"])
             
-            if st.form_submit_button("Add Stock"):
+            # തിരഞ്ഞെടുക്കുന്ന ഇൻഡക്സിന് അനുസരിച്ച് സ്റ്റോക്ക് ലിസ്റ്റ് വരുന്നു
+            stock_list = get_index_stocks(sel_idx)
+            sel_sym = c2.selectbox("Select Stock Symbol", stock_list)
+            
+            qty = c1.number_input("Quantity", min_value=0.1)
+            avg_p = c2.number_input("Average Buy Price", min_value=1.0)
+            
+            if st.form_submit_button("Save to Portfolio"):
                 conn = get_connection()
-                conn.execute("INSERT INTO portfolio (name, index_type, quantity, buy_price) VALUES (?,?,?,?)",
-                             (name, idx, qty, buy_p))
+                conn.execute("INSERT INTO portfolio (symbol, index_name, qty, avg_price, date_added) VALUES (?,?,?,?,?)",
+                             (sel_sym, sel_idx, qty, avg_p, datetime.now().strftime("%Y-%m-%d")))
                 conn.commit()
                 conn.close()
-                st.success(f"{name} added!")
+                st.success(f"{sel_sym} added to {sel_idx}!")
                 st.rerun()
 
-    with t2:
+    with tab2:
         if not df_portfolio.empty:
-            to_del = st.selectbox("Select stock to remove", df_portfolio['name'].tolist())
+            to_del = st.selectbox("Select Stock to Remove", df_portfolio['symbol'].unique())
             if st.button("Delete Asset"):
                 conn = get_connection()
-                conn.execute("DELETE FROM portfolio WHERE name = ?", (to_del,))
+                conn.execute("DELETE FROM portfolio WHERE symbol = ?", (to_del,))
                 conn.commit()
                 conn.close()
                 st.rerun()
