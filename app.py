@@ -1,107 +1,153 @@
 import streamlit as st
 import pandas as pd
-import requests
+import sqlite3
 import plotly.express as px
+from datetime import datetime
 
-# --- കോൺഫിഗറേഷൻ ---
-# BotFather തന്ന ടോക്കൺ ഇവിടെ നൽകുക
-API_TOKEN = 'YOUR_BOT_TOKEN_HERE' 
-CHAT_ID = '6044203893'
+# --- DATABASE SETUP ---
+def get_connection():
+    return sqlite3.connect("habeeb_inv.db", check_same_thread=False)
 
-def send_telegram(msg):
-    url = f"https://api.telegram.org/bot{API_TOKEN}/sendMessage?chat_id={CHAT_ID}&text={msg}&parse_mode=Markdown"
-    try:
-        requests.get(url)
-    except:
-        pass
+def init_db():
+    conn = get_connection()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS portfolio (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            category TEXT,
+            quantity INTEGER,
+            buy_price REAL,
+            current_price REAL
+        )
+    """)
+    conn.commit()
+    conn.close()
 
-# പേജ് സെറ്റിംഗ്സ്
+init_db()
+
+# --- PAGE CONFIG ---
 st.set_page_config(page_title="Habeeb's Power Dashboard", layout="wide")
 
-# ബ്ലൂ തീം സ്റ്റൈലിംഗ് (നിങ്ങൾ നൽകിയ ഫോട്ടോയിലെ പോലെ)
+# UI മെച്ചപ്പെടുത്താനുള്ള CSS (ഫോട്ടോയിലെ അതേ ലുക്കിന് വേണ്ടി)
 st.markdown("""
     <style>
-    .main { background-color: #F4F7F9; }
-    .stMetric { background-color: white; padding: 20px; border-radius: 12px; box-shadow: 0px 4px 10px rgba(0,0,0,0.05); }
-    [data-testid="stSidebar"] { background-color: #1A3A5F; color: white; }
-    .stButton>button { background-color: #1E3A8A; color: white; border-radius: 8px; width: 100%; font-weight: bold; }
-    .css-10trblm { color: white; } /* Sidebar text color */
+    .stApp { background-color: #F4F7F9; }
+    div[data-testid="stMetric"] {
+        background-color: white;
+        border-radius: 15px;
+        padding: 20px;
+        border-left: 5px solid #1E3A8A;
+        box-shadow: 0px 5px 15px rgba(0,0,0,0.05);
+    }
+    [data-testid="stSidebar"] { background-color: #1A3A5F; }
+    .stButton>button { 
+        background-color: #1E3A8A; 
+        color: white; 
+        border-radius: 10px; 
+        height: 3em;
+        font-weight: bold;
+    }
+    .stDataFrame { background-color: white; border-radius: 15px; }
     </style>
     """, unsafe_allow_html=True)
 
-# സൈഡ് ബാർ നാവിഗേഷൻ
+# --- DATA FETCHING ---
+def load_data():
+    conn = get_connection()
+    data = pd.read_sql_query("SELECT * FROM portfolio", conn)
+    conn.close()
+    return data
+
+df = load_data()
+
+# --- SIDEBAR ---
 with st.sidebar:
-    st.markdown("<h2 style='text-align: center; color: white;'>HABEEB INV</h2>", unsafe_allow_html=True)
+    st.markdown("<h1 style='color: white; text-align: center;'>HABEEB INV</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='color: #BDC3C7; text-align: center;'>Investor Dashboard</p>", unsafe_allow_html=True)
     st.markdown("---")
-    st.write("🏠 Home")
-    st.write("📊 Analytics")
-    st.write("⚙️ Settings")
+    page = st.radio("Menu", ["🏠 Dashboard", "⚙️ Manage Portfolio"])
     st.markdown("---")
-    st.info("Upload your Excel file to update charts.")
+    if not df.empty:
+        st.success(f"Tracking {len(df)} Assets")
 
-st.title("📊 Portfolio Power Dashboard")
-
-# ഫയൽ അപ്‌ലോഡ് (Excel മാത്രം)
-uploaded_file = st.file_uploader("നിങ്ങളുടെ എക്സൽ (Excel) ഫയൽ ഇവിടെ അപ്‌ലോഡ് ചെയ്യുക", type=['xlsx'])
-
-if uploaded_file:
-    # ഡാറ്റ റീഡ് ചെയ്യുന്നു
-    df = pd.read_excel(uploaded_file)
+# --- MAIN PAGES ---
+if page == "🏠 Dashboard":
+    st.markdown(f"### Welcome Back, User")
+    st.caption(f"Last updated: {datetime.now().strftime('%d %B %Y')}")
     
-    # വരികൾ ക്ലീൻ ചെയ്യുന്നു
-    df = df.dropna(subset=['Name', 'Invest'])
+    if not df.empty:
+        # Calculations
+        df['Invested'] = df['quantity'] * df['buy_price']
+        df['Current_Val'] = df['quantity'] * df['current_price']
+        df['PnL'] = df['Current_Val'] - df['Invested']
+        
+        t_inv = df['Invested'].sum()
+        t_cur = df['Current_Val'].sum()
+        t_pnl = df['PnL'].sum()
+        pnl_p = (t_pnl / t_inv * 100) if t_inv > 0 else 0
 
-    # മുകളിലെ കാർഡുകൾ (KPIs)
-    total_invest = df['Invest'].sum()
-    current_val = df['CM Value'].sum()
-    total_pnl = df['P&L'].sum()
-    pnl_pct = (total_pnl / total_invest) * 100 if total_invest != 0 else 0
+        # KPI Metrics - ആദ്യ ഫോട്ടോയിലെ പോലെ 4 കാർഡുകൾ
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Total Invested", f"₹{t_inv:,.0f}")
+        m2.metric("Current Value", f"₹{t_cur:,.0f}")
+        m3.metric("Net Profit", f"₹{t_pnl:,.0f}", f"{pnl_p:.2f}%")
+        m4.metric("Assets", f"{len(df)}")
 
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Total Invested", f"₹{total_invest:,.0f}")
-    with col2:
-        st.metric("Current Value", f"₹{current_val:,.0f}")
-    with col3:
-        st.metric("Net P&L", f"₹{total_pnl:,.0f}", f"{pnl_pct:.2f}%")
-    with col4:
-        st.metric("Stocks Count", len(df))
+        st.markdown("---")
 
-    st.markdown("---")
+        # Visuals - ചാർട്ടുകൾ
+        col_main, col_side = st.columns([2, 1])
+        
+        with col_main:
+            st.subheader("📈 Performance Trend")
+            # മനോഹരമായ ഒരു Area Chart (ഫോട്ടോയിലുള്ളത് പോലെ)
+            fig_area = px.area(df, x='name', y='Current_Val', 
+                              color_discrete_sequence=['#1E3A8A'],
+                              template="simple_white", title="Value Distribution")
+            st.plotly_chart(fig_area, use_container_width=True)
 
-    # ചാർട്ടുകൾ (ഫോട്ടോയിലെ മോഡൽ)
-    c1, c2 = st.columns([2, 1])
+        with col_side:
+            st.subheader("Sector Split")
+            fig_pie = px.pie(df, names='category', values='Invested', 
+                            hole=0.6, color_discrete_sequence=px.colors.qualitative.Pastel)
+            st.plotly_chart(fig_pie, use_container_width=True)
 
-    with c1:
-        st.subheader("📈 Individual Stock Performance")
-        fig = px.bar(df, x='Name', y='P&L', color='P&L', 
-                     color_continuous_scale=['#FF4B4B', '#00CC96'],
-                     template="plotly_white")
-        st.plotly_chart(fig, use_container_width=True)
+        # Detailed Table
+        st.subheader("📋 Portfolio Holdings")
+        st.dataframe(df[['name', 'category', 'quantity', 'buy_price', 'current_price', 'PnL']], use_container_width=True)
+    else:
+        st.info("നിങ്ങളുടെ പോർട്ട്‌ഫോളിയോയിൽ സ്റ്റോക്കുകൾ ഒന്നുമില്ല. 'Manage Portfolio' ക്ലിക്ക് ചെയ്ത് തുടങ്ങുക.")
 
-    with c2:
-        st.subheader("Sector Wise Split")
-        fig2 = px.pie(df, names='Category', values='Invest', hole=0.5)
-        st.plotly_chart(fig2, use_container_width=True)
+elif page == "⚙️ Manage Portfolio":
+    st.title("Settings & Management")
+    
+    t1, t2 = st.tabs(["➕ Add New Stock", "🗑️ Remove Stock"])
+    
+    with t1:
+        with st.form("add_form", clear_on_submit=True):
+            c1, c2 = st.columns(2)
+            name = c1.text_input("Stock/ETF Symbol (e.g. RELIANCE)").upper()
+            cat = c2.selectbox("Asset Class", ["Equity", "ETF", "SGB", "Gold", "Debt"])
+            qty = c1.number_input("Total Quantity", min_value=1)
+            price = c2.number_input("Average Buy Price", min_value=0.0)
+            
+            if st.form_submit_button("Add to Portfolio"):
+                if name:
+                    conn = get_connection()
+                    conn.execute("INSERT INTO portfolio (name, category, quantity, buy_price, current_price) VALUES (?,?,?,?,?)",
+                                 (name, cat, qty, price, price))
+                    conn.commit()
+                    conn.close()
+                    st.success(f"{name} added successfully!")
+                    st.rerun()
 
-    # ഡാറ്റ ടേബിൾ
-    st.subheader("📋 Detailed Portfolio")
-    st.dataframe(df.style.format(subset=['Invest', 'CM Value', 'P&L'], formatter="₹{:.2f}"), use_container_width=True)
-
-    # ടെലിഗ്രാം അലേർട്ട് ബട്ടൺ
-    st.markdown("---")
-    if st.button("🚀 Send Live Report to Telegram"):
-        status = "🟢 PROFIT" if total_pnl >= 0 else "🔴 LOSS"
-        msg = (
-            f"🔔 *HABEEB PORTFOLIO UPDATE*\n\n"
-            f"Status: {status}\n"
-            f"💰 *Invested:* ₹{total_invest:,.0f}\n"
-            f"📈 *Current:* ₹{current_val:,.0f}\n"
-            f"💵 *Net P&L:* ₹{total_pnl:,.0f} ({pnl_pct:.2f}%)\n\n"
-            f"Dashboard Updated! ✅"
-        )
-        send_telegram(msg)
-        st.success("Telegram-ലേക്ക് റിപ്പോർട്ട് അയച്ചു!")
-
-else:
-    st.info("നിങ്ങളുടെ 2026 New Excel ഫയൽ അപ്‌ലോഡ് ചെയ്താൽ ഉടൻ ഡാറ്റ കാണാൻ സാധിക്കും.")
+    with t2:
+        if not df.empty:
+            to_del = st.selectbox("Select Asset to Remove", df['name'].tolist())
+            if st.button("Delete Asset", type="primary"):
+                conn = get_connection()
+                conn.execute("DELETE FROM portfolio WHERE name = ?", (to_del,))
+                conn.commit()
+                conn.close()
+                st.warning(f"{to_del} removed from portfolio.")
+                st.rerun()
