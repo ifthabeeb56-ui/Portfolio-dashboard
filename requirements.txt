@@ -1,7 +1,5 @@
 streamlit
 pandas
-sqlite3
-plotly
 yfinance
+plotly
 lxml
-html5lib
