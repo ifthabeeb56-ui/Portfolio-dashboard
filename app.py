@@ -53,7 +53,6 @@ def update_live_prices(df):
     tickers = df[df['Status'] == "Holding"]['Name'].unique().tolist()
     if not tickers: return df
     try:
-        # വിലകൾ കൃത്യമായി ലഭിക്കാൻ പീരിയഡ് 5d ആയി നൽകുന്നു
         live_data = yf.download(tickers, period="5d", progress=False)
         if live_data.empty: return df
         
@@ -70,7 +69,6 @@ def update_live_prices(df):
                         df.at[index, 'CMP'] = round(new_p, 2)
                         current_val = round(row['QTY Available'] * new_p, 2)
                         df.at[index, 'CM Value'] = current_val
-                        # P&L calculation: (Current Value + Dividends) - (Initial Investment + Taxes)
                         net_pnl = (current_val + row['Dividend']) - (row['Investment'] + row['Tax'])
                         df.at[index, 'P&L'] = round(net_pnl, 2)
                         if row['Investment'] > 0:
@@ -90,24 +88,66 @@ nifty500_list = get_nifty500_tickers()
 st.title("📊 Habeeb's Power Hub v6.8")
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["🔍 Heatmap", "💼 Portfolio", "📊 Analytics", "📰 News", "👀 Watchlist"])
 
-# --- TAB 1: HEATMAP ---
+# --- TAB 1: HEATMAP (AUTOMATIC & SWITCHABLE) ---
 with tab1:
-    st.subheader("Market Visualization")
-    show_watch = st.toggle("Include Watchlist in Heatmap", value=False)
-    hold_stocks = df[df['Status'] == "Holding"]['Name'].unique().tolist()
+    st.subheader("Market Visualization Settings")
+    
+    col_s1, col_s2 = st.columns(2)
+    with col_s1:
+        size_option = st.radio("Box Size based on:", ["Investment", "Daily % Change"], horizontal=True)
+    with col_s2:
+        show_watch = st.toggle("Include Watchlist in Heatmap", value=False)
+    
+    hold_stocks_df = df[df['Status'] == "Holding"].copy()
+    hold_stocks = hold_stocks_df['Name'].unique().tolist()
     final_tickers = list(set(hold_stocks + watch_stocks)) if show_watch else hold_stocks
+
     if final_tickers:
-        if st.button("🚀 Generate/Refresh Heatmap"):
-            with st.spinner("Fetching Data..."):
+        with st.spinner("Fetching Heatmap Data..."):
+            try:
                 m_data = yf.download(final_tickers, period="5d", progress=False)['Close']
+                
                 if not m_data.empty and len(m_data) > 1:
                     m_changes = ((m_data.iloc[-1] - m_data.iloc[-2]) / m_data.iloc[-2]) * 100
-                    m_df = pd.DataFrame({"Symbol": m_changes.index, "Change %": m_changes.values, "Price": m_data.iloc[-1].values})
-                    fig = px.treemap(m_df, path=['Symbol'], values='Price', color='Change %', 
-                                   color_continuous_scale='RdYlGn', range_color=[-3, 3],
-                                   hover_data={'Price': ': .2f', 'Change %': ': .2f%'})
+                    
+                    m_df = pd.DataFrame({
+                        "Symbol": m_changes.index,
+                        "Change %": m_changes.values,
+                        "Price": m_data.iloc[-1].values
+                    })
+
+                    m_df = m_df.merge(hold_stocks_df[['Name', 'Investment']], left_on='Symbol', right_on='Name', how='left')
+                    m_df['Investment'] = m_df['Investment'].fillna(1000) 
+                    
+                    if size_option == "Daily % Change":
+                        m_df['Size_Value'] = m_df['Change %'].abs() + 0.1
+                    else:
+                        m_df['Size_Value'] = m_df['Investment']
+
+                    fig = px.treemap(
+                        m_df, 
+                        path=['Symbol'], 
+                        values='Size_Value', 
+                        color='Change %',    
+                        color_continuous_scale='RdYlGn', 
+                        range_color=[-3, 3],
+                        hover_data={'Price': ': .2f', 'Change %': ': .2f%', 'Investment': ': .2f'}
+                    )
+                    
+                    fig.update_layout(margin=dict(t=10, l=10, r=10, b=10), height=550)
+                    fig.update_traces(
+                        textinfo="label+text", 
+                        texttemplate="<b>%{label}</b><br>%{color:.2f}%",
+                        textfont=dict(size=20)
+                    )
+                    # ചെറിയ ബോക്സുകളിലും ടെക്സ്റ്റ് കൃത്യമായി വരാൻ
+                    fig.update_layout(uniformtext=dict(minsize=10, mode='hide'))
+                    
                     st.plotly_chart(fig, use_container_width=True)
-    else: st.info("Heatmap കാണുന്നതിനായി സ്റ്റോക്കുകൾ ആഡ് ചെയ്യുക.")
+            except Exception as e:
+                st.error(f"Heatmap കാണിക്കാൻ കഴിഞ്ഞില്ല: {e}")
+    else:
+        st.info("Heatmap കാണുന്നതിനായി സ്റ്റോക്കുകൾ ആഡ് ചെയ്യുക.")
 
 # --- TAB 2: PORTFOLIO ---
 with tab2:
@@ -121,7 +161,6 @@ with tab2:
             c2.metric("Current Value", f"₹{t_val:,.2f}")
             c3.metric("Total P&L", f"₹{t_pnl:,.2f}", f"{((t_pnl/t_inv)*100):.2f}%" if t_inv > 0 else "0%")
             
-            # ടേബിൾ കളർ കോഡിംഗ്
             st.dataframe(hold_df.style.map(lambda v: 'color:green' if (isinstance(v, (int, float)) and v > 0) else 'color:red' if (isinstance(v, (int, float)) and v < 0) else '', subset=['P&L', 'P_Percentage']), use_container_width=True, hide_index=True)
 
             csv_data = hold_df.to_csv(index=False).encode('utf-8')
@@ -145,7 +184,7 @@ with tab2:
                         ticker_data = yf.Ticker(n_in + ".NS")
                         auto_p = ticker_data.fast_info['last_price']
                         st.success(f"Current Price: ₹{auto_p:.2f}")
-                    except: st.error("വില കണ്ടെത്താൻ കഴിഞ്ഞില്ല. മാന്വൽ ആയി നൽകുക.")
+                    except: st.error("വില കണ്ടെത്താൻ കഴിഞ്ഞില്ല.")
 
             b_p = st.number_input("Buy Price", value=float(auto_p), step=0.01)
             q_y = st.number_input("Qty", min_value=1, value=1)
@@ -165,7 +204,6 @@ with tab2:
                     df = pd.concat([df, pd.DataFrame([new])], ignore_index=True)
                     df.to_csv(PORTFOLIO_FILE, index=False)
                     st.success("സേവ് ചെയ്തു!"); st.rerun()
-                else: st.warning("ദയവായി ഒരു സ്റ്റോക്ക് തിരഞ്ഞെടുക്കുക.")
         
         with c_b:
             st.write("### Manage Existing")
