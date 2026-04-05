@@ -103,8 +103,11 @@ with tab2:
             c3.metric("Total P&L", f"₹{t_pnl:,.2f}", f"{((t_pnl/t_inv)*100):.2f}%" if t_inv > 0 else "0%")
             
             # TradingView ലിങ്ക് ചേർക്കുന്നു
-            hold_df['Link'] = hold_df['Name'].apply(lambda x: f"https://www.tradingview.com/symbols/NSE-{x.replace('.NS','')}/")
-            st.dataframe(hold_df.style.applymap(lambda v: 'color:green' if v > 0 else 'color:red', subset=['P&L', 'P_Percentage']), use_container_width=True, hide_index=True)
+            hold_df['Link'] = hold_df['Name'].apply(lambda x: f"https://www.tradingview.com/symbols/NSE-{str(x).replace('.NS','')}/")
+            
+            # പിശക് ഒഴിവാക്കാൻ ഇവിടെ style.map എന്ന് മാറ്റിയിട്ടുണ്ട്.
+            # കളർ കോഡിംഗ് വർക്ക് ആകാൻ വേണ്ടിയാണ് map ഉപയോഗിക്കുന്നത്.
+            st.dataframe(hold_df.style.map(lambda v: 'color:green' if v > 0 else 'color:red', subset=['P&L', 'P_Percentage']), use_container_width=True, hide_index=True)
 
     with st.expander("➕ Add/Remove Stock"):
         c_a, c_b = st.columns(2)
