@@ -1,0 +1,6 @@
+Category,Buy Date,Name,CMP,Buy Price,QTY Available,Account,Investment,CM Value,P&L,P_Percentage,Tax,Dividend,Remark,Status
+Long Term,2024-01-10,RELIANCE.NS,2950.0,2800.0,10,Habeeb,28100.0,29500.0,1400.0,4.98,100.0,0,Good Buy,Holding
+ETF,2024-02-15,NETFITY.BE,250.0,240.0,50,RISU,12050.0,12500.0,450.0,3.73,50.0,0,,Holding
+Gold,2024-03-01,GOLDBEES.NS,60.0,55.0,100,Habeeb,5530.0,6000.0,470.0,8.5,30.0,0,,Holding
+Swing,2024-03-20,SBIN.NS,750.0,720.0,20,RISU,14480.0,15000.0,520.0,3.59,80.0,0,,Holding
+Mutual Fund,2024-01-20,INFY.NS,1600.0,1650.0,5,Habeeb,8280.0,8000.0,-280.0,-3.38,30.0,0,,Holding
