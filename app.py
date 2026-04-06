@@ -4,7 +4,7 @@ import yfinance as yf
 from datetime import datetime
 import plotly.express as px
 import os
-import time  # പുതുതായി ചേർത്തത്
+import time
 from GoogleNews import GoogleNews
 from deep_translator import GoogleTranslator
 
@@ -25,17 +25,20 @@ def get_nifty500_tickers():
 def load_data():
     if os.path.exists(PORTFOLIO_FILE):
         df = pd.read_csv(PORTFOLIO_FILE)
-        req_cols = ["CMP", "Buy Price", "QTY Available", "Investment", "CM Value", "P&L", "P_Percentage", "Dividend", "Tax", "Today_PnL"]
+        # വിറ്റ സ്റ്റോക്കുകൾക്ക് ആവശ്യമായ Sell_Price, Sell_Date കോളങ്ങൾ ഉണ്ടെന്ന് ഉറപ്പുവരുത്തുന്നു
+        req_cols = ["CMP", "Buy Price", "QTY Available", "Investment", "CM Value", "P&L", "P_Percentage", "Dividend", "Tax", "Today_PnL", "Sell_Price", "Sell_Date"]
         for col in req_cols:
-            if col not in df.columns: df[col] = 0.0
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            if col not in df.columns:
+                if col == "Sell_Date": df[col] = ""
+                else: df[col] = 0.0
+            if col != "Sell_Date" and col != "Status" and col != "Name" and col != "Account":
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
         return df
-    return pd.DataFrame(columns=["Category", "Buy Date", "Name", "CMP", "Buy Price", "QTY Available", "Account", "Investment", "CM Value", "P&L", "P_Percentage", "Tax", "Dividend", "Remark", "Status", "Today_PnL"])
+    return pd.DataFrame(columns=["Category", "Buy Date", "Name", "CMP", "Buy Price", "QTY Available", "Account", "Investment", "CM Value", "P&L", "P_Percentage", "Tax", "Dividend", "Remark", "Status", "Today_PnL", "Sell_Price", "Sell_Date"])
 
 def get_watchlist():
     if os.path.exists(WATCHLIST_FILE):
         with open(WATCHLIST_FILE, "r") as f:
-            # ഡ്യൂപ്ലിക്കേറ്റ് ഒഴിവാക്കാൻ സെറ്റ് ഉപയോഗിക്കുന്നു
             return sorted(list(set([line.strip() for line in f.readlines() if line.strip()])))
     return []
 
@@ -43,7 +46,6 @@ def update_live_prices(df):
     tickers = df[df['Status'] == "Holding"]['Name'].unique().tolist()
     if not tickers: return df
     try:
-        # Tickers ലിസ്റ്റ് ശരിയാണെന്ന് ഉറപ്പുവരുത്തുക
         live_data = yf.download(tickers, period="5d", progress=False)['Close']
         if live_data.empty: return df
         
@@ -51,7 +53,6 @@ def update_live_prices(df):
             if row['Status'] == "Holding":
                 t_name = row['Name']
                 try:
-                    # സിംഗിൾ ടിക്കർ ആണെങ്കിൽ ഡാറ്റാഫ്രെയിം സ്ട്രക്ചർ മാറും, അത് ഹാൻഡിൽ ചെയ്യുന്നു
                     stock_series = live_data[t_name].dropna() if len(tickers) > 1 else live_data.dropna()
                     if len(stock_series) >= 2:
                         new_p = float(stock_series.iloc[-1])
@@ -78,7 +79,8 @@ watch_stocks = get_watchlist()
 nifty500_list = get_nifty500_tickers()
 
 st.title("📊 Habeeb's Power Hub v6.9")
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["🔍 Heatmap", "💼 Portfolio", "📊 Analytics", "📰 News", "👀 Watchlist"])
+# പുതിയ ടാബ് 'Sold History' ചേർത്തു
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🔍 Heatmap", "💼 Portfolio", "📜 Sold History", "📊 Analytics", "📰 News", "👀 Watchlist"])
 
 # --- TAB 1: HEATMAP ---
 with tab1:
@@ -112,7 +114,6 @@ with tab2:
                 return 'color: green' if val > 0 else 'color: red' if val < 0 else ''
 
             if view_mode == "Summary View":
-                # അക്കൗണ്ട് കൂടി ഗ്രൂപ്പിംഗിൽ ഉൾപ്പെടുത്തി
                 summ_df = hold_df.groupby(['Name', 'Account']).agg({'Investment':'sum', 'CM Value':'sum', 'P&L':'sum', 'Today_PnL':'sum'}).reset_index()
                 summ_df['Weight %'] = ((summ_df['Investment'] / t_inv) * 100).round(1) if t_inv > 0 else 0
                 for c in ['Investment', 'CM Value', 'P&L', 'Today_PnL']: summ_df[c] = summ_df[c].astype(int)
@@ -143,25 +144,52 @@ with tab2:
             acc_in = st.selectbox("Account", ["Habeeb", "RISU"])
             if st.button("💾 Save Stock"):
                 sym = n_in + ".NS" if ".NS" not in n_in else n_in
-                new = {"Category": "Equity", "Buy Date": str(b_date), "Name": sym, "CMP": b_p, "Buy Price": b_p, "QTY Available": q_y, "Account": acc_in, "Investment": round(q_y*b_p, 2), "CM Value": round(q_y*b_p, 2), "P&L": 0, "P_Percentage": 0, "Status": "Holding", "Tax": tax_in, "Dividend": 0, "Today_PnL": 0}
+                new = {"Category": "Equity", "Buy Date": str(b_date), "Name": sym, "CMP": b_p, "Buy Price": b_p, "QTY Available": q_y, "Account": acc_in, "Investment": round(q_y*b_p, 2), "CM Value": round(q_y*b_p, 2), "P&L": 0, "P_Percentage": 0, "Status": "Holding", "Tax": tax_in, "Dividend": 0, "Today_PnL": 0, "Sell_Price": 0, "Sell_Date": ""}
                 df = pd.concat([df, pd.DataFrame([new])], ignore_index=True)
                 df.to_csv(PORTFOLIO_FILE, index=False); st.success("Saved!"); st.rerun()
         with c_b:
             st.write("### Manage Stock")
             h_list = list(df[df['Status']=='Holding']['Name'].unique())
-            st_m = st.selectbox("Select Stock", ["None"] + h_list)
+            st_m = st.selectbox("Select Stock to Sell/Update", ["None"] + h_list)
             if st_m != "None":
+                s_p = st.number_input("Selling Price", min_value=0.0)
                 if st.button("🗑️ Mark as Sold"):
-                    # ഒരേ പേരിൽ ഒന്നിലധികം എൻട്രി ഉണ്ടെങ്കിൽ അത് കൺട്രോൾ ചെയ്യാൻ ഇൻഡക്സ് ഉപയോഗിക്കുന്നതാണ് നല്ലത്
-                    df.loc[df['Name'] == st_m, 'Status'] = 'Sold'
-                    df.to_csv(PORTFOLIO_FILE, index=False); st.rerun()
+                    # വിറ്റ വിവരങ്ങൾ അപ്‌ഡേറ്റ് ചെയ്യുന്നു
+                    idx = df[df['Name'] == st_m].index
+                    df.loc[idx, 'Status'] = 'Sold'
+                    df.loc[idx, 'Sell_Price'] = s_p
+                    df.loc[idx, 'Sell_Date'] = datetime.now().strftime('%Y-%m-%d')
+                    # ലാഭനഷ്ടം കണക്കാക്കുന്നു
+                    final_val = df.loc[idx, 'QTY Available'] * s_p
+                    df.loc[idx, 'P&L'] = round((final_val + df.loc[idx, 'Dividend']) - (df.loc[idx, 'Investment'] + df.loc[idx, 'Tax']), 2)
+                    df.loc[idx, 'P_Percentage'] = round((df.loc[idx, 'P&L'] / df.loc[idx, 'Investment']) * 100, 2)
+                    
+                    df.to_csv(PORTFOLIO_FILE, index=False); st.success(f"{st_m} Sold!"); st.rerun()
+                
                 div_val = st.number_input("Add Dividend", min_value=0.0)
                 if st.button("➕ Update Dividend"):
                     df.loc[df['Name'] == st_m, 'Dividend'] += div_val
                     df.to_csv(PORTFOLIO_FILE, index=False); st.rerun()
 
-# --- TAB 3: ANALYTICS ---
+# --- TAB 3: SOLD HISTORY (പുതിയത്) ---
 with tab3:
+    st.subheader("📜 വിറ്റ സ്റ്റോക്കുകളുടെ വിവരങ്ങൾ")
+    sold_df = df[df['Status'] == 'Sold'].copy()
+    if not sold_df.empty:
+        # കാണിക്കേണ്ട കോളങ്ങൾ ക്രമീകരിക്കുന്നു
+        display_sold = sold_df[['Sell_Date', 'Name', 'QTY Available', 'Buy Price', 'Sell_Price', 'Investment', 'P&L', 'P_Percentage']].copy()
+        display_sold.columns = ['Sold Date', 'Stock Name', 'Qty', 'Buy Price', 'Sell Price', 'Inv. Value', 'Profit/Loss', 'Gain %']
+        
+        # ഡിസൈൻ ഭംഗിയാക്കാൻ നമ്പറുകൾ ഇന്റീജർ ആക്കുന്നു
+        for col in ['Qty', 'Buy Price', 'Sell Price', 'Inv. Value', 'Profit/Loss']:
+            display_sold[col] = display_sold[col].astype(int)
+        
+        st.dataframe(display_sold.style.applymap(lambda x: 'color: green' if x > 0 else 'color: red' if x < 0 else '', subset=['Profit/Loss', 'Gain %']), use_container_width=True, hide_index=True)
+    else:
+        st.info("വിറ്റ സ്റ്റോക്കുകളുടെ വിവരങ്ങൾ ലഭ്യമല്ല.")
+
+# --- TAB 4: ANALYTICS ---
+with tab4:
     if not hold_stocks_df.empty:
         col_an1, col_an2 = st.columns(2)
         with col_an1:
@@ -169,15 +197,15 @@ with tab3:
         with col_an2:
             st.plotly_chart(px.bar(hold_stocks_df, x='Name', y='P&L', color='P&L', title='Stock-wise P&L'), use_container_width=True)
 
-# --- TAB 4: NEWS ---
-with tab4:
+# --- TAB 5: NEWS ---
+with tab5:
     n_stock = st.selectbox("Select Stock for News:", ["None"] + list(df['Name'].unique()))
     if n_stock != "None" and st.button("Get News"):
         with st.spinner("വാർത്തകൾ തിരയുന്നു..."):
             try:
                 gn = GoogleNews(lang='en', period='7d')
                 gn.search(n_stock.replace(".NS", ""))
-                time.sleep(1) # ചെറിയ ഡിലേ നൽകുന്നു
+                time.sleep(1)
                 results = gn.result()
                 if results:
                     translator = GoogleTranslator(source='en', target='ml')
@@ -192,8 +220,8 @@ with tab4:
                 else: st.info("വാർത്തകൾ ഒന്നും ലഭ്യമല്ല.")
             except Exception as e: st.error(f"Error: {e}")
 
-# --- TAB 5: WATCHLIST ---
-with tab5:
+# --- TAB 6: WATCHLIST ---
+with tab6:
     st.subheader("👀 My Watchlist")
     win = st.text_input("Add Symbol (eg: SBIN)").upper().strip()
     if st.button("Add to Watchlist") and win:
