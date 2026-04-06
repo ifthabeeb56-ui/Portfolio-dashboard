@@ -4,6 +4,7 @@ import yfinance as yf
 from datetime import datetime
 import plotly.express as px
 import os
+import time  # പുതുതായി ചേർത്തത്
 from GoogleNews import GoogleNews
 from deep_translator import GoogleTranslator
 
@@ -34,6 +35,7 @@ def load_data():
 def get_watchlist():
     if os.path.exists(WATCHLIST_FILE):
         with open(WATCHLIST_FILE, "r") as f:
+            # ഡ്യൂപ്ലിക്കേറ്റ് ഒഴിവാക്കാൻ സെറ്റ് ഉപയോഗിക്കുന്നു
             return sorted(list(set([line.strip() for line in f.readlines() if line.strip()])))
     return []
 
@@ -41,7 +43,7 @@ def update_live_prices(df):
     tickers = df[df['Status'] == "Holding"]['Name'].unique().tolist()
     if not tickers: return df
     try:
-        # 5 ദിവസത്തെ ഡാറ്റ എടുക്കുന്നത് വഴി 'Today's P&L' കൃത്യമായി കണക്കാക്കാം
+        # Tickers ലിസ്റ്റ് ശരിയാണെന്ന് ഉറപ്പുവരുത്തുക
         live_data = yf.download(tickers, period="5d", progress=False)['Close']
         if live_data.empty: return df
         
@@ -49,6 +51,7 @@ def update_live_prices(df):
             if row['Status'] == "Holding":
                 t_name = row['Name']
                 try:
+                    # സിംഗിൾ ടിക്കർ ആണെങ്കിൽ ഡാറ്റാഫ്രെയിം സ്ട്രക്ചർ മാറും, അത് ഹാൻഡിൽ ചെയ്യുന്നു
                     stock_series = live_data[t_name].dropna() if len(tickers) > 1 else live_data.dropna()
                     if len(stock_series) >= 2:
                         new_p = float(stock_series.iloc[-1])
@@ -57,7 +60,6 @@ def update_live_prices(df):
                         df.at[index, 'CMP'] = round(new_p, 2)
                         current_val = round(row['QTY Available'] * new_p, 2)
                         df.at[index, 'CM Value'] = current_val
-                        # Today's P&L calculation
                         df.at[index, 'Today_PnL'] = round((new_p - prev_p) * row['QTY Available'], 2)
                         
                         net_pnl = (current_val + row['Dividend']) - (row['Investment'] + row['Tax'])
@@ -84,7 +86,6 @@ with tab1:
     if not hold_stocks_df.empty:
         fig = px.treemap(hold_stocks_df, path=['Name'], values='Investment', color='P_Percentage', 
                          color_continuous_scale='RdYlGn', range_color=[-5, 5])
-        fig.update_layout(margin=dict(t=30, l=10, r=10, b=10))
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("ഹീറ്റ്‌മാപ്പ് കാണുന്നതിനായി സ്റ്റോക്കുകൾ ആഡ് ചെയ്യുക.")
@@ -99,81 +100,59 @@ with tab2:
             t_inv, t_val, t_pnl = hold_df['Investment'].sum(), hold_df['CM Value'].sum(), hold_df['P&L'].sum()
             t_today_pnl = hold_df['Today_PnL'].sum()
             
-            # Metrics Row
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Total Investment", f"₹{int(t_inv):,}")
             m2.metric("Current Value", f"₹{int(t_val):,}")
             m3.metric("Total P&L", f"₹{int(t_pnl):,}", f"{((t_pnl/t_inv)*100):.2f}%" if t_inv > 0 else "0%")
             m4.metric("Today's P&L", f"₹{int(t_today_pnl):,}")
 
-            # Summary Switch
             view_mode = st.radio("Display Mode:", ["Detailed View", "Summary View"], horizontal=True)
 
             def style_pnl(val):
                 return 'color: green' if val > 0 else 'color: red' if val < 0 else ''
 
             if view_mode == "Summary View":
-                # ഒരേ സ്റ്റോക്ക് പല തവണ വാങ്ങിയിട്ടുണ്ടെങ്കിൽ ഗ്രൂപ്പ് ചെയ്ത് കാണിക്കുന്നു
-                summ_df = hold_df.groupby('Name').agg({
-                    'Investment': 'sum',
-                    'CM Value': 'sum',
-                    'P&L': 'sum',
-                    'Today_PnL': 'sum'
-                }).reset_index()
+                # അക്കൗണ്ട് കൂടി ഗ്രൂപ്പിംഗിൽ ഉൾപ്പെടുത്തി
+                summ_df = hold_df.groupby(['Name', 'Account']).agg({'Investment':'sum', 'CM Value':'sum', 'P&L':'sum', 'Today_PnL':'sum'}).reset_index()
                 summ_df['Weight %'] = ((summ_df['Investment'] / t_inv) * 100).round(1) if t_inv > 0 else 0
-                
-                # വായന സുഗമമാക്കാൻ ഡെസിമൽ ഒഴിവാക്കുന്നു (Integer display)
-                for c in ['Investment', 'CM Value', 'P&L', 'Today_PnL']: 
-                    summ_df[c] = summ_df[c].fillna(0).astype(int)
-                
+                for c in ['Investment', 'CM Value', 'P&L', 'Today_PnL']: summ_df[c] = summ_df[c].astype(int)
                 st.dataframe(summ_df.style.map(style_pnl, subset=['P&L', 'Today_PnL']), use_container_width=True, hide_index=True)
             else:
                 det_df = hold_df.copy()
-                # Detailed view ലും ഡെസിമൽ ഒഴിവാക്കുന്നു
-                disp_cols = ["CMP", "Buy Price", "QTY Available", "Investment", "CM Value", "P&L", "Today_PnL"]
-                for c in disp_cols: det_df[c] = det_df[c].fillna(0).astype(int)
+                for c in ["CMP", "Buy Price", "Investment", "CM Value", "P&L", "Today_PnL"]: det_df[c] = det_df[c].astype(int)
                 st.dataframe(det_df.style.map(style_pnl, subset=['P&L', 'Today_PnL']), use_container_width=True, hide_index=True)
 
-            # --- Download/Upload Section ---
             st.divider()
             col_d1, col_d2 = st.columns(2)
             with col_d1:
-                st.download_button("📥 Download Portfolio CSV", df.to_csv(index=False).encode('utf-8'), 
-                                   f"portfolio_backup_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv")
+                st.download_button("📥 Download Portfolio CSV", df.to_csv(index=False).encode('utf-8'), "portfolio_backup.csv", "text/csv")
             with col_d2:
-                up_p = st.file_uploader("📤 Upload Portfolio CSV", type=["csv"], key="port_up")
-                if up_p and st.button("Confirm Portfolio Restore"):
+                up_p = st.file_uploader("📤 Upload Portfolio CSV", type=["csv"])
+                if up_p and st.button("Confirm Restore"):
                     pd.read_csv(up_p).to_csv(PORTFOLIO_FILE, index=False); st.rerun()
 
-    # --- Add/Manage Stock Expander ---
-    with st.expander("➕ Add New Stock / Manage"):
+    with st.expander("➕ Add/Remove/Update Stock"):
         c_a, c_b = st.columns(2)
         with c_a:
             st.write("### Add Stock")
-            b_date = st.date_input("Purchase Date", datetime.now())
-            n_in = st.selectbox("Select Symbol", nifty500_list)
-            b_p = st.number_input("Buy Price", min_value=0.1, step=0.1)
+            b_date = st.date_input("Date", datetime.now())
+            n_in = st.selectbox("Symbol", nifty500_list)
+            b_p = st.number_input("Buy Price", min_value=0.1)
             q_y = st.number_input("Qty", min_value=1)
-            tax_in = st.number_input("Tax", min_value=0.0)
-            acc = st.selectbox("Account", ["Habeeb", "RISU"])
-            
+            tax_in = st.number_input("Tax", 0.0)
+            acc_in = st.selectbox("Account", ["Habeeb", "RISU"])
             if st.button("💾 Save Stock"):
                 sym = n_in + ".NS" if ".NS" not in n_in else n_in
-                new_data = {
-                    "Category": "Equity", "Buy Date": str(b_date), "Name": sym, "CMP": b_p, 
-                    "Buy Price": b_p, "QTY Available": q_y, "Account": acc, 
-                    "Investment": round(q_y*b_p, 2), "CM Value": round(q_y*b_p, 2), "P&L": 0, 
-                    "P_Percentage": 0, "Status": "Holding", "Tax": tax_in, "Dividend": 0, "Today_PnL": 0
-                }
-                df = pd.concat([df, pd.DataFrame([new_data])], ignore_index=True)
-                df.to_csv(PORTFOLIO_FILE, index=False); st.success(f"{sym} Saved!"); st.rerun()
-        
+                new = {"Category": "Equity", "Buy Date": str(b_date), "Name": sym, "CMP": b_p, "Buy Price": b_p, "QTY Available": q_y, "Account": acc_in, "Investment": round(q_y*b_p, 2), "CM Value": round(q_y*b_p, 2), "P&L": 0, "P_Percentage": 0, "Status": "Holding", "Tax": tax_in, "Dividend": 0, "Today_PnL": 0}
+                df = pd.concat([df, pd.DataFrame([new])], ignore_index=True)
+                df.to_csv(PORTFOLIO_FILE, index=False); st.success("Saved!"); st.rerun()
         with c_b:
-            st.write("### Manage Existing")
+            st.write("### Manage Stock")
             h_list = list(df[df['Status']=='Holding']['Name'].unique())
             st_m = st.selectbox("Select Stock", ["None"] + h_list)
             if st_m != "None":
                 if st.button("🗑️ Mark as Sold"):
+                    # ഒരേ പേരിൽ ഒന്നിലധികം എൻട്രി ഉണ്ടെങ്കിൽ അത് കൺട്രോൾ ചെയ്യാൻ ഇൻഡക്സ് ഉപയോഗിക്കുന്നതാണ് നല്ലത്
                     df.loc[df['Name'] == st_m, 'Status'] = 'Sold'
                     df.to_csv(PORTFOLIO_FILE, index=False); st.rerun()
                 div_val = st.number_input("Add Dividend", min_value=0.0)
@@ -184,14 +163,52 @@ with tab2:
 # --- TAB 3: ANALYTICS ---
 with tab3:
     if not hold_stocks_df.empty:
-        st.plotly_chart(px.pie(hold_stocks_df, values='Investment', names='Account', title='Account Distribution', hole=0.4), use_container_width=True)
-        st.plotly_chart(px.bar(hold_stocks_df, x='Name', y='P&L', color='P&L', title='Stock-wise P&L'), use_container_width=True)
+        col_an1, col_an2 = st.columns(2)
+        with col_an1:
+            st.plotly_chart(px.pie(hold_stocks_df, values='Investment', names='Account', title='Account Distribution', hole=0.4), use_container_width=True)
+        with col_an2:
+            st.plotly_chart(px.bar(hold_stocks_df, x='Name', y='P&L', color='P&L', title='Stock-wise P&L'), use_container_width=True)
 
 # --- TAB 4: NEWS ---
 with tab4:
     n_stock = st.selectbox("Select Stock for News:", ["None"] + list(df['Name'].unique()))
     if n_stock != "None" and st.button("Get News"):
-        try:
-            gn = GoogleNews(lang='en', period='7d'); gn.search(n_stock.replace(".NS", ""))
-            for r in gn.result()[:5]:
-                st.write(f"📢 **{r['title']}**"); st.caption(f"{r['date']} | [Read More]({r['link']})"); st.divider()
+        with st.spinner("വാർത്തകൾ തിരയുന്നു..."):
+            try:
+                gn = GoogleNews(lang='en', period='7d')
+                gn.search(n_stock.replace(".NS", ""))
+                time.sleep(1) # ചെറിയ ഡിലേ നൽകുന്നു
+                results = gn.result()
+                if results:
+                    translator = GoogleTranslator(source='en', target='ml')
+                    for r in results[:5]:
+                        st.write(f"📢 **{r['title']}**")
+                        with st.expander("മലയാളത്തിൽ വായിക്കാം"):
+                            try:
+                                st.write(translator.translate(r['title']))
+                            except: st.write("പരിഭാഷ ലഭ്യമായില്ല.")
+                        st.caption(f"{r['date']} | [Read More]({r['link']})")
+                        st.divider()
+                else: st.info("വാർത്തകൾ ഒന്നും ലഭ്യമല്ല.")
+            except Exception as e: st.error(f"Error: {e}")
+
+# --- TAB 5: WATCHLIST ---
+with tab5:
+    st.subheader("👀 My Watchlist")
+    win = st.text_input("Add Symbol (eg: SBIN)").upper().strip()
+    if st.button("Add to Watchlist") and win:
+        ticker = win + ".NS" if ".NS" not in win else win
+        with open(WATCHLIST_FILE, "a") as f: f.write(ticker + "\n")
+        st.success(f"{ticker} ചേർത്തു!")
+        st.rerun()
+    
+    st.divider()
+    if watch_stocks:
+        for s in watch_stocks:
+            wc1, wc2 = st.columns([4, 1])
+            wc1.write(f"📈 **{s}**")
+            if wc2.button("Remove", key=f"del_{s}"):
+                updated = [item for item in watch_stocks if item != s]
+                with open(WATCHLIST_FILE, "w") as f:
+                    for item in updated: f.write(item + "\n")
+                st.rerun()
