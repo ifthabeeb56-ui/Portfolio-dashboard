@@ -101,4 +101,3 @@ with tab1:
         st.toggle("Include Watchlist in Heatmap") # UI Switch
         
         val_col = 'Investment' if
-        
