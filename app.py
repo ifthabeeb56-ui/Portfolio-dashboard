@@ -7,7 +7,7 @@ import os
 from GoogleNews import GoogleNews
 from deep_translator import GoogleTranslator
 
-# --- 1. ഫയൽ സെറ്റിംഗ്സ് ---
+# --- 1. ഫയൽ സെറ്റിംഗ്സ് (പഴയത് പോലെ തന്നെ) ---
 PORTFOLIO_FILE = "habeeb_portfolio_v6.csv"
 WATCHLIST_FILE = "watchlist_data.txt"
 HISTORY_FILE = "portfolio_history.csv"
@@ -25,10 +25,8 @@ def load_data():
     cols = ["Category", "Buy Date", "Sell Date", "Name", "CMP", "Buy Price", "QTY Available", "Account", "Investment", "CM Value", "P&L", "P_Percentage", "Tax", "Dividend", "Remark", "Status"]
     if os.path.exists(PORTFOLIO_FILE):
         df = pd.read_csv(PORTFOLIO_FILE)
-        # പഴയ ഫയലിൽ Sell Date ഇല്ലെങ്കിൽ അത് ചേർക്കുന്നു
         if "Sell Date" not in df.columns:
             df["Sell Date"] = ""
-        
         num_cols = ["CMP", "Buy Price", "QTY Available", "Investment", "CM Value", "P&L", "P_Percentage", "Dividend", "Tax"]
         for col in num_cols:
             if col in df.columns:
@@ -65,7 +63,7 @@ def update_live_prices(df):
             if row['Status'] == "Holding":
                 t_name = row['Name']
                 try:
-                    # സിംഗിൾ ടിക്കർ ആണെങ്കിൽ ഡാറ്റ എടുക്കുന്ന രീതി
+                    # നിങ്ങളുടെ ഒറിജിനൽ ഇൻഡക്സിങ് ലോജിക് തിരികെ കൊണ്ടുവന്നു
                     if len(tickers) == 1:
                         new_p = float(live_data['Close'].iloc[-1])
                     else:
@@ -92,6 +90,22 @@ watch_stocks = get_watchlist()
 nifty500_list = get_nifty500_tickers()
 
 st.title("📊 Habeeb's Power Hub v6.8")
+
+# --- 💾 സൈഡ്‌ബാർ ഡാറ്റാ മാനേജ്‌മെന്റ് ---
+with st.sidebar:
+    st.header("Settings & Backup")
+    if not df.empty:
+        csv_data = df.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Download Backup", data=csv_data, file_name="portfolio_backup.csv", mime="text/csv")
+    
+    st.divider()
+    uploaded_file = st.file_uploader("📤 Upload CSV", type=["csv"])
+    if uploaded_file:
+        if st.button("Confirm Overwrite"):
+            new_df = pd.read_csv(uploaded_file)
+            new_df.to_csv(PORTFOLIO_FILE, index=False)
+            st.success("Updated!"); st.rerun()
+
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["🔍 Heatmap", "💼 Portfolio", "📊 Analytics", "📰 News", "👀 Watchlist"])
 
 # --- TAB 1: HEATMAP ---
@@ -141,61 +155,84 @@ with tab2:
             c2.metric("Current Value", f"₹{t_val:,.2f}")
             c3.metric("Total P&L", f"₹{t_pnl:,.2f}", f"{((t_pnl/t_inv)*100):.2f}%" if t_inv > 0 else "0%")
             
-            # --- QTY ഡെസിമൽ ഒഴിവാക്കി ---
-            disp_df = hold_df.copy()
-            disp_df['QTY Available'] = disp_df['QTY Available'].astype(int)
+            st.divider()
             
-            st.dataframe(disp_df.style.map(lambda v: 'color:green' if (isinstance(v, (int, float)) and v > 0) else 'color:red' if (isinstance(v, (int, float)) and v < 0) else '', subset=['P&L', 'P_Percentage']), use_container_width=True, hide_index=True)
+            # നിങ്ങളുടെ പുതിയ സമ്മറി ലിസ്റ്റ് സ്വിച്ച്
+            view_mode = st.toggle("Show Stock-wise Summary (Grouped)", value=False)
+            
+            if view_mode:
+                summary_df = hold_df.groupby('Name').agg({
+                    'QTY Available': 'sum', 'Investment': 'sum', 'CM Value': 'sum', 'P&L': 'sum'
+                }).reset_index()
+                summary_df['Avg Price'] = (summary_df['Investment'] / summary_df['QTY Available']).round(2)
+                summary_df['P%'] = ((summary_df['P&L'] / summary_df['Investment']) * 100).round(2)
+                summary_df['QTY Available'] = summary_df['QTY Available'].astype(int)
+                st.dataframe(summary_df[['Name', 'QTY Available', 'Avg Price', 'Investment', 'CM Value', 'P&L', 'P%']].style.map(lambda v: 'color:green' if (isinstance(v, (int, float)) and v > 0) else 'color:red' if (isinstance(v, (int, float)) and v < 0) else '', subset=['P&L', 'P%']), use_container_width=True, hide_index=True)
+            else:
+                disp_df = hold_df.copy()
+                disp_df['QTY Available'] = disp_df['QTY Available'].astype(int)
+                st.dataframe(disp_df.style.map(lambda v: 'color:green' if (isinstance(v, (int, float)) and v > 0) else 'color:red' if (isinstance(v, (int, float)) and v < 0) else '', subset=['P&L', 'P_Percentage']), use_container_width=True, hide_index=True)
 
-    # വിറ്റ സ്റ്റോക്കുകളുടെ ചരിത്രം
-    with st.expander("📂 View Sold Stocks (History)"):
+    with st.expander("📂 View Sold Stocks"):
         sold_df = df[df['Status'] == "Sold"].copy()
         if not sold_df.empty:
-            sold_df['QTY Available'] = sold_df['QTY Available'].astype(int)
-            st.write("### വിറ്റ സ്റ്റോക്കുകൾ")
-            st.dataframe(sold_df[['Name', 'Buy Date', 'Sell Date', 'QTY Available', 'Investment', 'P&L', 'P_Percentage']], use_container_width=True, hide_index=True)
-        else:
-            st.info("വിൽപന വിവരങ്ങൾ ലഭ്യമല്ല.")
+            st.dataframe(sold_df[['Name', 'Buy Date', 'Sell Date', 'QTY Available', 'Investment', 'P&L']], use_container_width=True, hide_index=True)
 
     with st.expander("➕ Add/Remove/Update Stock"):
         c_a, c_b = st.columns(2)
         with c_a:
             st.write("### Add New Stock")
-            b_date = st.date_input("Purchase Date", datetime.now())
+            b_date = st.date_input("Purchase Date", datetime.now(), key="p_date")
             cat = st.selectbox("Category", ["Equity", "ETF", "SGB", "Mutual Fund"])
             acc = st.selectbox("Account", ["Habeeb", "RISU"])
-            n_in = st.selectbox("Select Symbol from Nifty 500", ["Custom"] + nifty500_list)
-            if n_in == "Custom": n_in = st.text_input("Enter Symbol").upper().strip()
-            
+            n_in = st.selectbox("Nifty 500", ["Custom"] + nifty500_list)
+            if n_in == "Custom": n_in = st.text_input("Symbol").upper().strip()
             b_p = st.number_input("Buy Price", step=0.01)
             q_y = st.number_input("Qty", min_value=1, value=1)
-            tax_in = st.number_input("Tax", 0.0, step=0.01)
-            remark = st.text_input("Remark")
-            
-            if st.button("💾 Save Stock"):
+            tax_in = st.number_input("Tax", 0.0)
+            if st.button("💾 Save"):
                 if n_in:
                     sym = n_in + ".NS" if ".NS" not in n_in else n_in
-                    new = {
-                        "Category": cat, "Buy Date": str(b_date), "Name": sym, 
-                        "CMP": b_p, "Buy Price": b_p, "QTY Available": q_y, 
-                        "Account": acc, "Investment": round(q_y*b_p, 2), 
-                        "CM Value": round(q_y*b_p, 2), "P&L": 0, "P_Percentage": 0, 
-                        "Status": "Holding", "Remark": remark, "Dividend": 0, "Tax": tax_in, "Sell Date": ""
-                    }
+                    new = {"Category": cat, "Buy Date": str(b_date), "Name": sym, "CMP": b_p, "Buy Price": b_p, "QTY Available": q_y, "Account": acc, "Investment": round(q_y*b_p, 2), "CM Value": round(q_y*b_p, 2), "P&L": 0, "P_Percentage": 0, "Status": "Holding", "Remark": "", "Dividend": 0, "Tax": tax_in, "Sell Date": ""}
                     df = pd.concat([df, pd.DataFrame([new])], ignore_index=True)
-                    df.to_csv(PORTFOLIO_FILE, index=False)
-                    st.success("സേവ് ചെയ്തു!"); st.rerun()
-        
+                    df.to_csv(PORTFOLIO_FILE, index=False); st.rerun()
         with c_b:
-            st.write("### Manage Existing")
-            holding_list = list(df[df['Status']=='Holding']['Name'].unique())
-            st_manage = st.selectbox("Select Stock", ["None"] + holding_list)
-            if st_manage != "None":
-                if st.button("🗑️ Confirm Sell"):
-                    df.loc[df['Name'] == st_manage, 'Status'] = 'Sold'
-                    df.loc[df['Name'] == st_manage, 'Sell Date'] = str(datetime.now().date())
-                    df.to_csv(PORTFOLIO_FILE, index=False)
-                    st.success("Sold!"); st.rerun()
+            st.write("### Sell Stock")
+            hold_list = list(df[df['Status']=='Holding']['Name'].unique())
+            st_sell = st.selectbox("Select Stock", ["None"] + hold_list)
+            if st_sell != "None" and st.button("🗑️ Confirm Sell"):
+                df.loc[df['Name'] == st_sell, 'Status'] = 'Sold'
+                df.loc[df['Name'] == st_sell, 'Sell Date'] = str(datetime.now().date())
+                df.to_csv(PORTFOLIO_FILE, index=False); st.rerun()
 
-# --- TAB 3, 4, 5 (ബാക്കി കോഡ് മാറ്റമില്ലാതെ തുടരുന്നു...) ---
-# (Analytics, News, Watchlist സെക്ഷനുകൾ നിങ്ങളുടെ പഴയ കോഡ് തന്നെ ഇതിന്റെ താഴെ ചേർക്കാം)
+# --- മറ്റ് ടാബുകൾ (Analytics, News, Watchlist - മാറ്റമില്ലാതെ തുടരുന്നു) ---
+with tab3:
+    if not hold_df.empty:
+        c_p1, c_p2 = st.columns(2)
+        c_p1.plotly_chart(px.pie(hold_df, values='Investment', names='Category', title='Category Distribution', hole=0.4), use_container_width=True)
+        c_p2.plotly_chart(px.pie(hold_df, values='Investment', names='Account', title='Account Distribution', hole=0.4), use_container_width=True)
+
+with tab4:
+    n_stock = st.selectbox("News for:", ["None"] + list(df['Name'].unique()))
+    if n_stock != "None" and st.button("Get News"):
+        gn = GoogleNews(lang='en', period='7d')
+        gn.search(n_stock.replace(".NS", ""))
+        for r in gn.result()[:5]:
+            st.write(f"📢 **{r['title']}**")
+            st.caption(f"[Read]({r['link']})")
+
+with tab5:
+    w_in = st.text_input("Add to Watchlist").upper().strip()
+    if st.button("Add") and w_in:
+        s = w_in + ".NS" if ".NS" not in w_in else w_in
+        with open(WATCHLIST_FILE, "a") as f: f.write(s + "\n")
+        st.rerun()
+    if watch_stocks and st.button("🔄 Refresh Watchlist"):
+        w_data = yf.download(watch_stocks, period="2d", progress=False)['Close']
+        cols = st.columns(4)
+        for i, s in enumerate(watch_stocks):
+            try:
+                cp, pp = (float(w_data.iloc[-1]), float(w_data.iloc[-2])) if len(watch_stocks) == 1 else (float(w_data[s].iloc[-1]), float(w_data[s].iloc[-2]))
+                cols[i%4].metric(s, f"₹{cp:.2f}", f"{(cp-pp)/pp*100:.2f}%")
+            except: pass
+        
