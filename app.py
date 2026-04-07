@@ -64,7 +64,7 @@ def update_live_prices(df):
                             df.at[index, 'P_Percentage'] = round((net_pnl / row['Investment']) * 100, 2)
                 except: continue
         df.to_csv(PORTFOLIO_FILE, index=False)
-    except: st.sidebar.error("ലൈവ് പ്രൈസ് അപ്‌ഡേറ്റ് പരാജയപ്പെട്ടു.")
+    except: st.sidebar.error("லைവ് പ്രൈസ് അപ്‌ഡേറ്റ് പരാജയപ്പെട്ടു.")
     return df
 
 # --- App Setup ---
@@ -72,34 +72,6 @@ st.set_page_config(layout="wide", page_title="Habeeb's Power Hub v6.9", page_ico
 df = load_data()
 watch_stocks = get_watchlist()
 nifty500_list = get_nifty500_tickers()
-
-# --- SIDEBAR: BACKUP & UPLOAD ---
-st.sidebar.header("⚙️ Data Management")
-
-# 1. Portfolio Backup
-st.sidebar.subheader("Portfolio Data")
-if not df.empty:
-    csv_p = df.to_csv(index=False).encode('utf-8')
-    st.sidebar.download_button("📥 Portfolio Backup", data=csv_p, file_name="portfolio_backup.csv", mime='text/csv')
-
-up_p = st.sidebar.file_uploader("Restore Portfolio (CSV)", type="csv")
-if up_p and st.sidebar.button("Confirm Portfolio Restore"):
-    pd.read_csv(up_p).to_csv(PORTFOLIO_FILE, index=False)
-    st.rerun()
-
-st.sidebar.divider()
-
-# 2. Watchlist Backup
-st.sidebar.subheader("Watchlist Data")
-if watch_stocks:
-    wl_content = "\n".join(watch_stocks)
-    st.sidebar.download_button("📥 Watchlist Backup", data=wl_content, file_name="watchlist_backup.txt")
-
-up_w = st.sidebar.file_uploader("Restore Watchlist (TXT)", type="txt")
-if up_w and st.sidebar.button("Confirm Watchlist Restore"):
-    with open(WATCHLIST_FILE, "wb") as f:
-        f.write(up_w.getvalue())
-    st.rerun()
 
 st.title("📊 Habeeb's Power Hub v6.9")
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🔍 Heatmap", "💼 Portfolio", "📜 Sold History", "📊 Analytics", "📰 News", "👀 Watchlist"])
@@ -146,28 +118,13 @@ with tab2:
             st.subheader("Add Stock")
             b_date = st.date_input("Date", datetime.now())
             n_in = st.selectbox("Symbol", nifty500_list)
-            sym = n_in + ".NS" if ".NS" not in n_in else n_in
-            
-            # --- Auto Price Fetching ---
-            auto_p = 0.0
-            try:
-                auto_p = yf.Ticker(sym).history(period="1d")['Close'].iloc[-1]
-            except: auto_p = 0.0
-
-            b_p = st.number_input("Buy Price", value=float(round(auto_p, 2)), min_value=0.0)
-            q_y = st.number_input("Qty", min_value=1)
+            b_p, q_y = st.number_input("Buy Price", 0.1), st.number_input("Qty", 1)
             tax_in, acc_in = st.number_input("Tax", 0.0), st.selectbox("Account", ["Habeeb", "RISU"])
-            
             if st.button("💾 Save Stock"):
-                if b_p <= 0:
-                    st.error("Price cannot be zero! സ്റ്റോക്ക് സേവ് ചെയ്തിട്ടില്ല.")
-                else:
-                    new = {"Category": "Equity", "Buy Date": str(b_date), "Name": sym, "CMP": b_p, "Buy Price": b_p, "QTY Available": q_y, "Account": acc_in, "Investment": round(q_y*b_p, 2), "CM Value": round(q_y*b_p, 2), "P&L": 0, "P_Percentage": 0, "Status": "Holding", "Tax": tax_in, "Dividend": 0, "Today_PnL": 0, "Sell_Price": 0, "Sell_Date": ""}
-                    df = pd.concat([df, pd.DataFrame([new])], ignore_index=True)
-                    df.to_csv(PORTFOLIO_FILE, index=False)
-                    st.success(f"{sym} Saved!")
-                    time.sleep(1)
-                    st.rerun()
+                sym = n_in + ".NS" if ".NS" not in n_in else n_in
+                new = {"Category": "Equity", "Buy Date": str(b_date), "Name": sym, "CMP": b_p, "Buy Price": b_p, "QTY Available": q_y, "Account": acc_in, "Investment": round(q_y*b_p, 2), "CM Value": round(q_y*b_p, 2), "P&L": 0, "P_Percentage": 0, "Status": "Holding", "Tax": tax_in, "Dividend": 0, "Today_PnL": 0, "Sell_Price": 0, "Sell_Date": ""}
+                df = pd.concat([df, pd.DataFrame([new])], ignore_index=True)
+                df.to_csv(PORTFOLIO_FILE, index=False); st.rerun()
         with c_b:
             st.subheader("Manage Stock")
             h_list = list(df[df['Status']=='Holding']['Name'].unique())
@@ -188,7 +145,7 @@ with tab2:
 
 # --- TAB 3: SOLD HISTORY ---
 with tab3:
-    st.subheader("📜 Sold Stocks")
+    st.subheader("📜 വിറ്റ സ്റ്റോക്കുകളുടെ വിവരങ്ങൾ")
     sold_df = df[df['Status'] == 'Sold'].copy()
     if not sold_df.empty:
         disp_sold = sold_df[['Sell_Date', 'Name', 'QTY Available', 'Buy Price', 'Sell_Price', 'Investment', 'P&L', 'P_Percentage']].copy()
@@ -220,7 +177,7 @@ with tab5:
                         st.write(f"📢 **{r['title']}**")
                         with st.expander("മലയാളത്തിൽ"):
                             try: st.write(trans.translate(r['title']))
-                            except: st.write("పరిഭാഷ പ伝えるു.")
+                            except: st.write("പരിഭാഷ പരാജയപ്പെട്ടു.")
                         st.caption(f"{r['date']} | [Read More]({r['link']})")
                         st.divider()
                 else: st.info("വാർത്തകളില്ല.")
